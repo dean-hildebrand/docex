@@ -1,0 +1,70 @@
+# Kamal 2 deploy config: one Hetzner VPS runs the app (Puma + Solid Queue)
+# and Postgres as an accessory. kamal-proxy terminates TLS via Let's Encrypt.
+#
+# Before the first deploy, replace the two placeholders:
+#   SERVER_IP   -> the Hetzner VPS public IPv4
+#   APP_DOMAIN  -> the domain whose A record points at that IP
+
+service: docex
+
+# Built locally and pushed through Kamal's local registry over SSH,
+# so no external registry account is needed.
+image: docex
+
+servers:
+  web:
+    - SERVER_IP
+
+proxy:
+  ssl: true
+  host: APP_DOMAIN
+
+registry:
+  server: localhost:5555
+
+env:
+  secret:
+    - RAILS_MASTER_KEY
+    - DOCEX_DATABASE_PASSWORD
+  clear:
+    # Single server: run the Solid Queue supervisor inside Puma.
+    # Split into a dedicated `job` role if extraction volume grows.
+    SOLID_QUEUE_IN_PUMA: true
+
+    # Kamal names accessory containers <service>-<accessory>, reachable on
+    # the shared kamal Docker network.
+    DB_HOST: docex-db
+
+aliases:
+  console: app exec --interactive --reuse "bin/rails console"
+  shell: app exec --interactive --reuse "bash"
+  logs: app logs -f
+  dbc: app exec --interactive --reuse "bin/rails dbconsole --include-password"
+
+# Local disk for Active Storage until S3-compatible storage is wired up in M1.
+volumes:
+  - "docex_storage:/rails/storage"
+
+asset_path: /rails/public/assets
+
+builder:
+  # Hetzner CX/CPX servers are x86. Use arm64 for CAX (Ampere) servers.
+  arch: amd64
+
+accessories:
+  db:
+    image: postgres:17
+    host: SERVER_IP
+    # Bound to localhost only: Postgres is never exposed.
+    port: "127.0.0.1:5432:5432"
+    env:
+      clear:
+        POSTGRES_USER: docex
+        POSTGRES_DB: docex_production
+      secret:
+        - POSTGRES_PASSWORD
+    files:
+      # Runs once, on first boot with an empty data directory.
+      - db/production.sql:/docker-entrypoint-initdb.d/setup.sql
+    directories:
+      - data:/var/lib/postgresql/data
