@@ -1,4 +1,7 @@
 class Organization < ApplicationRecord
+  include HasPublicId
+  public_id_prefix "org"
+
   SLUG_FORMAT = /\A[a-z0-9]+(?:-[a-z0-9]+)*\z/
 
   before_validation :derive_slug, if: -> { slug.blank? && name.present? }
